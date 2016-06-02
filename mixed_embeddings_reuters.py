@@ -2,7 +2,7 @@ from sklearn.base import TransformerMixin, BaseEstimator
 from keras.preprocessing import sequence
 from collections import Counter
 from keras.models import Model
-from keras.layers import Dense, Dropout, merge, Merge, Input, \
+from keras.layers import Dense, Embedding, Dropout, merge, Merge, Input, \
     TimeDistributed, Activation, Reshape, Permute, LSTM
 import numpy as np
 from keras.datasets import reuters
@@ -151,10 +151,12 @@ class Tokenizer(BaseEstimator, TransformerMixin):
         return summary
 
 
-def build_model(batch_size, word_count, word_length):
+def build_model(batch_size, chars_vocab_size, word_count, word_length):
     print('Build model...')
-    input = Input(batch_shape=(batch_size,word_count, word_length,))
-    forward_lstm = TimeDistributed(LSTM(64))(input)
+    input = Input(shape=(word_count, word_length),dtype='int32')
+    embedded = TimeDistributed(Embedding(chars_vocab_size, 128,
+                                         input_length=word_count))(input)
+    forward_lstm = TimeDistributed(LSTM(64))(embedded)
     # backward_lstm = LSTM(64, go_backwards=True,
     #                      sequence_of_sequences=True)(input)
     # char_embedding = merge([forward_lstm,backward_lstm],mode='concat')
@@ -177,14 +179,16 @@ WORD_VOCAB_SIZE = 20000
 WORD_COUNT = 80
 WORD_LENGTH = 20
 BATCH_SIZE = 32
+CHAR_VOCAB_SIZE = 40
 
-# data_access = DataAccess(vocab_size=WORD_VOCAB_SIZE, max_word_length=WORD_LENGTH,
-#                  max_text_length=WORD_COUNT, )
-#
-# X_train, y_train, X_test, y_test, vocab_char_size = data_access.load_data()
+data_access = DataAccess(vocab_size=WORD_VOCAB_SIZE, max_word_length=WORD_LENGTH,
+                  max_text_length=WORD_COUNT, )
+
+X_train, y_train, X_test, y_test, vocab_char_size = data_access.load_data()
 
 model = build_model(batch_size=BATCH_SIZE,
+                    chars_vocab_size=CHAR_VOCAB_SIZE,
                     word_count=WORD_COUNT,
                     word_length=WORD_LENGTH)
 
-#train_and_test_model(X_train, y_train, X_test, y_test, BATCH_SIZE)
+train_and_test_model(X_train, y_train, X_test, y_test, BATCH_SIZE)
