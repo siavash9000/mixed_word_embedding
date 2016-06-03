@@ -7,6 +7,8 @@ from keras.layers import Dense, Embedding, Input, TimeDistributed, LSTM,  \
 import numpy as np
 from keras.datasets import reuters
 from keras.utils import np_utils
+from operator import itemgetter
+import random
 
 UNKNOWN_ITEM_ID = 0
 UNKNOWN_ITEM = u'\uFFFD'
@@ -56,9 +58,18 @@ class DataAccess(object):
         X_test = self.padder.pad_texts(X_test)
         return X_test, X_train
 
-    def load_data(self):
+    def load_data(self, sample_size=None):
         (X_train, y_train), (X_test, y_test) = reuters.load_data(
             start_char=None, index_from=None, nb_words=self.max_text_length)
+        if sample_size:
+            sample_indices_train = random.sample(range(len(X_train)),
+                                                 sample_size)
+            X_train = itemgetter(*sample_indices_train)(X_train)
+            y_train = itemgetter(*sample_indices_train)(y_train)
+
+            sample_indices_test = random.sample(range(len(X_test)),sample_size)
+            X_test = itemgetter(*sample_indices_test)(X_test)
+            y_test = itemgetter(*sample_indices_test)(y_test)
         index_word = dict((v, k) for k, v in reuters.get_word_index().items())
         X_train = [[index_word[idx] for idx in x] for x in X_train]
         X_test = [[index_word[idx] for idx in x] for x in X_test]
@@ -166,12 +177,13 @@ def build_model(nb_classes, chars_vocab_size, word_count, word_length,
                                          input_length=word_count,
                                          name='embedding'),
                                name='td_embedding')(input)
-    forward_lstm = TimeDistributed(LSTM(64,name='char_lstm'),
-                                   name='td_char_lstm')(embedded)
+    forward_lstm = TimeDistributed(LSTM(64,name='char_lstm',consume_less='cpu'),
+                                   name='td_char_lstm')(
+        embedded)
     # backward_lstm = LSTM(64, go_backwards=True,
     #                      sequence_of_sequences=True)(input)
     # char_embedding = merge([forward_lstm,backward_lstm],mode='concat')
-    lstm = LSTM(64, name='word_lstm')(forward_lstm)
+    lstm = LSTM(64, name='word_lstm', consume_less='cpu')(forward_lstm)
     dense = Dense(nb_classes, activation='sigmoid', name='dense')(lstm)
     output = Activation('softmax', name='output')(dense)
     model = Model(input=input, output=output)
@@ -197,7 +209,8 @@ CHAR_VOCAB_SIZE = 40
 data_access = DataAccess(vocab_size=WORD_VOCAB_SIZE, max_word_length=WORD_LENGTH,
                   max_text_length=WORD_COUNT, )
 
-X_train, y_train, X_test, y_test, vocab_char_size, nb_classes = data_access.load_data()
+X_train, y_train, X_test, y_test, vocab_char_size, nb_classes = \
+    data_access.load_data(sample_size=100)
 
 model = build_model(nb_classes=nb_classes,
                     chars_vocab_size=CHAR_VOCAB_SIZE,
