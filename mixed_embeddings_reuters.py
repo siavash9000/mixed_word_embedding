@@ -177,13 +177,12 @@ def build_model(nb_classes, chars_vocab_size, word_count, word_length,
                                          input_length=word_count,
                                          name='embedding'),
                                name='td_embedding')(input)
-    forward_lstm = TimeDistributed(LSTM(64,name='char_lstm',consume_less='cpu'),
-                                   name='td_char_lstm')(
-        embedded)
-    # backward_lstm = LSTM(64, go_backwards=True,
-    #                      sequence_of_sequences=True)(input)
+    forward_lstm = TimeDistributed(LSTM(64,name='char_lstm',
+                                        consume_less='gpu'),
+                                   name='td_char_lstm')(embedded)
+    # backward_lstm = LSTM(64, go_backwards=True)(input)
     # char_embedding = merge([forward_lstm,backward_lstm],mode='concat')
-    lstm = LSTM(64, name='word_lstm', consume_less='cpu')(forward_lstm)
+    lstm = LSTM(64, name='word_lstm', consume_less='gpu')(forward_lstm)
     dense = Dense(nb_classes, activation='sigmoid', name='dense')(lstm)
     output = Activation('softmax', name='output')(dense)
     model = Model(input=input, output=output)
@@ -204,7 +203,6 @@ WORD_VOCAB_SIZE = 20000
 WORD_COUNT = 1000
 WORD_LENGTH = 20
 BATCH_SIZE = 32
-CHAR_VOCAB_SIZE = 40
 
 data_access = DataAccess(vocab_size=WORD_VOCAB_SIZE, max_word_length=WORD_LENGTH,
                   max_text_length=WORD_COUNT, )
@@ -213,7 +211,7 @@ X_train, y_train, X_test, y_test, vocab_char_size, nb_classes = \
     data_access.load_data(sample_size=100)
 
 model = build_model(nb_classes=nb_classes,
-                    chars_vocab_size=CHAR_VOCAB_SIZE,
+                    chars_vocab_size=vocab_char_size,
                     word_count=WORD_COUNT,
                     word_length=WORD_LENGTH,
                     batch_size=BATCH_SIZE)
