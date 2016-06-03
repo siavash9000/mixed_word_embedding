@@ -156,9 +156,11 @@ class Tokenizer(BaseEstimator, TransformerMixin):
         return summary
 
 
-def build_model(nb_classes, chars_vocab_size, word_count, word_length):
+def build_model(nb_classes, chars_vocab_size, word_count, word_length,
+                batch_size):
     print('Build model...')
-    input = Input(shape=(word_count, word_length,),dtype='int32',
+    input = Input(batch_shape=(batch_size,word_count, word_length,),\
+            dtype='int32',
                   name='input')
     embedded = TimeDistributed(Embedding(chars_vocab_size, 128,
                                          input_length=word_count,
@@ -200,6 +202,7 @@ X_train, y_train, X_test, y_test, vocab_char_size, nb_classes = data_access.load
 model = build_model(nb_classes=nb_classes,
                     chars_vocab_size=CHAR_VOCAB_SIZE,
                     word_count=WORD_COUNT,
-                    word_length=WORD_LENGTH)
+                    word_length=WORD_LENGTH,
+                    batch_size=BATCH_SIZE)
 
 train_and_test_model(X_train, y_train, X_test, y_test, BATCH_SIZE)
