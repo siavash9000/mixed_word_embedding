@@ -21,8 +21,8 @@ def main():
                   dtype='int32')
     embedded = TimeDistributed(Embedding(CHAR_VOCAB_SIZE, 128,
                                          input_length=WORD_COUNT))(input)
-    lstm = TimeDistributed(LSTM(64, consume_less='cpu'))(embedded)
-    lstm = LSTM(64,consume_less='cpu')(lstm)
+    char_lstm = TimeDistributed(LSTM(64, consume_less='cpu'))(embedded)
+    lstm = LSTM(64,consume_less='cpu')(char_lstm)
     dense = Dense(NB_CLASSES, activation='sigmoid')(lstm)
     output = Activation('softmax')(dense)
     model = Model(input=input, output=output)
