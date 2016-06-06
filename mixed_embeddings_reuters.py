@@ -75,7 +75,7 @@ class DataAccess(object):
         X_test = [[index_word[idx] for idx in x] for x in X_test]
         X_test, X_train, vocab_char_size = self.tokenize(X_test, X_train)
         X_test, X_train = self.pad(X_test, X_train)
-        nb_classes = np.max(y_train)+1
+        nb_classes = np.max(y_train+y_test)+1
         Y_train = np_utils.to_categorical(y_train, nb_classes)
         Y_test = np_utils.to_categorical(y_test, nb_classes)
         print(len(X_train), 'train sequences')
