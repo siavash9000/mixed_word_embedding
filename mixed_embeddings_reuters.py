@@ -2,8 +2,8 @@ from sklearn.base import TransformerMixin, BaseEstimator
 from keras.preprocessing import sequence
 from collections import Counter
 from keras.models import Model
-from keras.layers import Dense, Embedding, Input, TimeDistributed, LSTM,  \
-    Activation
+from keras.layers import Dense, Embedding, Input, TimeDistributed, GRU,  \
+    Activation, merge
 import numpy as np
 from keras.datasets import reuters
 from keras.utils import np_utils
@@ -37,12 +37,12 @@ def build_dictionaries(char_counts):
 
 
 class DataAccess(object):
-    def __init__(self, vocab_size=None, max_word_length=None,
+    def __init__(self, max_word_length=None, word_vocab_size=None,
                  max_text_length=None):
-        self.tokenizer = Tokenizer(vocab_size=vocab_size)
+        self.tokenizer = Tokenizer()
         self.padder = SequencePadder(max_word_len=max_word_length,
-                                 max_text_len=max_text_length)
-        self.max_text_length = max_text_length
+                                     max_text_len=max_text_length)
+        self.word_vocab_size = word_vocab_size
 
     def tokenize(self, X_test, X_train):
         vocab_char_size = self.tokenizer.fit(X_train + X_test)
@@ -60,7 +60,7 @@ class DataAccess(object):
 
     def load_data(self, sample_size=None):
         (X_train, y_train), (X_test, y_test) = reuters.load_data(
-            start_char=None, index_from=None, nb_words=self.max_text_length)
+            start_char=None, index_from=None, nb_words=self.word_vocab_size)
         if sample_size:
             sample_indices_train = random.sample(range(len(X_train)),
                                                  sample_size)
@@ -86,8 +86,7 @@ class DataAccess(object):
 
 
 class CharIndexer(object):
-    def __init__(self, vocab_size=None, preprocess=None):
-        self.vocab_size_ = vocab_size
+    def __init__(self, preprocess=None):
         self._preprocess = preprocess
 
     def fit_on_texts(self, texts):
@@ -113,32 +112,24 @@ class SequencePadder(BaseEstimator, TransformerMixin):
         return self
 
     def pad_words(self, X, y=None):
-        maxlen = self.max_word_len
-        if maxlen is None:
-            maxlen = max([len(w) for w in [x for x in X]])
         padded = []
         for x in X:
-            padded.append(sequence.pad_sequences(x, maxlen=maxlen, value=-1))
+            padded.append(sequence.pad_sequences(x, maxlen=self.max_word_len, value=-1))
         return np.array(padded)
 
     def pad_texts(self, X, y=None):
-        maxlen = self.max_text_len
-        if maxlen is None:
-            maxlen = max([len(x) for x in X])
-        return sequence.pad_sequences(X, maxlen=maxlen, value=-1)
+        return sequence.pad_sequences(X, maxlen=self.max_text_len, value=-1)
 
 
 class Tokenizer(BaseEstimator, TransformerMixin):
 
-    def __init__(self, vocab_size=None):
+    def __init__(self):
         self.indexer_ = None
-        self.vocab_size_char = 0
 
     def fit(self, X, y=None):
-        self.indexer_ = CharIndexer(vocab_size=None)
+        self.indexer_ = CharIndexer()
         self.indexer_.fit_on_texts(X)
-        print(self.summary())
-        return len(self.vocab_char())
+        return self.indexer_.vocab_size()
 
     def transform(self, X, y=None):
         tokens_character_level = []
@@ -149,41 +140,33 @@ class Tokenizer(BaseEstimator, TransformerMixin):
             tokens_character_level.append(x_char_encoded)
         return np.array(tokens_character_level)
 
-    def vocab_char(self):
-        char_items = [item for item in self.indexer_._char2id.iteritems()]
-        char_items.sort(key=lambda (c, i): i)
-        chars = []
-        for (k, i) in char_items:
-            if isinstance(k, unicode):
-                chars.append(k.encode('utf-8'))
-            else:
-                chars.append(k)
-        return chars
-
-    def summary(self):
-        chars = self.vocab_char()
-        summary = 'Character vocabulary: {}, vocabulary size: {}'\
-            .format(''.join(chars), str(len(chars)))
-        return summary
-
 
 def build_model(nb_classes, chars_vocab_size, word_count, word_length,
                 batch_size):
     print('Build model...')
-    input = Input(batch_shape=(batch_size,word_count, word_length,),\
-            dtype='int32',
-                  name='input')
-    embedded = TimeDistributed(Embedding(chars_vocab_size, 128,
+    CONSUME_LESS='gpu'
+    input = Input(batch_shape=(batch_size,word_count, word_length,),
+            dtype='int32', name='input')
+    character_embedding = TimeDistributed(Embedding(chars_vocab_size, 15,
                                          input_length=word_count,
-                                         name='embedding'),
-                               name='td_embedding')(input)
-    forward_lstm = TimeDistributed(LSTM(64,name='char_lstm',
-                                        consume_less='gpu'),
-                                   name='td_char_lstm')(embedded)
-    # backward_lstm = LSTM(64, go_backwards=True)(input)
-    # char_embedding = merge([forward_lstm,backward_lstm],mode='concat')
-    lstm = LSTM(64, name='word_lstm', consume_less='gpu')(forward_lstm)
-    dense = Dense(nb_classes, activation='sigmoid', name='dense')(lstm)
+                                         name='char_embedding'),
+                               name='td_char_embedding')(input)
+    forward_gru = TimeDistributed(GRU(16,name='char_gru_forward',
+                                        consume_less=CONSUME_LESS,
+                                      dropout_W=0.2, dropout_U=0.2),
+                                   name='td_char_gru_forward')(character_embedding)
+    backward_gru = TimeDistributed(GRU(16,name='char_gru_backward',
+                                        consume_less=CONSUME_LESS,
+                                        go_backwards=True, dropout_W=0.2,
+                                       dropout_U=0.2),
+                                   name='td_char_gru_backward')(character_embedding)
+    char_embedding = merge([forward_gru,backward_gru],mode='concat')
+    word_embedding = Embedding(chars_vocab_size, 15,
+                                         input_length=word_count,
+                                         name='char_embedding')(input)
+    embedding = merge([char_embedding,word_embedding],mode='concat')
+    word_gru = GRU(32, name='word_lstm', consume_less=CONSUME_LESS, dropout_W=0.2, dropout_U=0.2)(embedding)
+    dense = Dense(nb_classes, activation='sigmoid', name='dense')(word_gru)
     output = Activation('softmax', name='output')(dense)
     model = Model(input=input, output=output)
     model.compile(loss='categorical_crossentropy', optimizer='adam',
@@ -199,21 +182,22 @@ def train_and_test_model(X_train, y_train, X_test, y_test, batch_size, nb_epoch 
     print('Test score:', score)
     print('Test accuracy:', acc)
 
-WORD_VOCAB_SIZE = 20000
-WORD_COUNT = 1000
-WORD_LENGTH = 20
-BATCH_SIZE = 32
+WORD_VOCAB_SIZE = 10000
+MAX_TEXT_LENGTH = 500
+MAX_WORD_LENGTH = 20
+BATCH_SIZE = 256
 
-data_access = DataAccess(vocab_size=WORD_VOCAB_SIZE, max_word_length=WORD_LENGTH,
-                  max_text_length=WORD_COUNT, )
+data_access = DataAccess(max_word_length=MAX_WORD_LENGTH,
+                         word_vocab_size=WORD_VOCAB_SIZE,
+                         max_text_length=MAX_TEXT_LENGTH)
 
 X_train, y_train, X_test, y_test, vocab_char_size, nb_classes = \
     data_access.load_data(sample_size=100)
 
 model = build_model(nb_classes=nb_classes,
                     chars_vocab_size=vocab_char_size,
-                    word_count=WORD_COUNT,
-                    word_length=WORD_LENGTH,
+                    word_count=MAX_TEXT_LENGTH,
+                    word_length=MAX_WORD_LENGTH,
                     batch_size=BATCH_SIZE)
 
 train_and_test_model(X_train, y_train, X_test, y_test, BATCH_SIZE)
