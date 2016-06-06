@@ -50,15 +50,19 @@ class DataAccess(object):
         X_test = self.tokenizer.transform(X_test)
         return X_test, X_train, vocab_char_size
 
-    def pad(self, X_test, X_train):
+    def pad(self,X_test_char, X_train_char,X_test, X_train):
         self.padder.fit(np.concatenate((X_train, X_test)))
-        X_train = self.padder.pad_words(X_train)
-        X_test = self.padder.pad_words(X_test)
+        X_train_char = self.padder.pad_words(X_train_char)
+        X_test_char = self.padder.pad_words(X_test_char)
+        X_train_char = self.padder.pad_texts(X_train_char)
+        X_test_char = self.padder.pad_texts(X_test_char)
+
         X_train = self.padder.pad_texts(X_train)
         X_test = self.padder.pad_texts(X_test)
-        return X_test, X_train
+        return X_test, X_train, X_test_char, X_train_char
 
     def load_data(self, sample_size=None):
+        print('Load Data...')
         (X_train, y_train), (X_test, y_test) = reuters.load_data(
             start_char=None, index_from=None, nb_words=self.word_vocab_size)
         if sample_size:
@@ -71,18 +75,17 @@ class DataAccess(object):
             X_test = itemgetter(*sample_indices_test)(X_test)
             y_test = itemgetter(*sample_indices_test)(y_test)
         index_word = dict((v, k) for k, v in reuters.get_word_index().items())
-        X_train = [[index_word[idx] for idx in x] for x in X_train]
-        X_test = [[index_word[idx] for idx in x] for x in X_test]
-        X_test, X_train, vocab_char_size = self.tokenize(X_test, X_train)
-        X_test, X_train = self.pad(X_test, X_train)
+        X_train_char = [[index_word[idx] for idx in x] for x in X_train]
+        X_test_char = [[index_word[idx] for idx in x] for x in X_test]
+        X_test_char, X_train_char, vocab_char_size = \
+            self.tokenize(X_test_char, X_train_char)
+        X_test, X_train, X_test_char, X_train_char = \
+            self.pad(X_test_char, X_train_char,X_test, X_train)
         nb_classes = np.max(y_train+y_test)+1
         Y_train = np_utils.to_categorical(y_train, nb_classes)
         Y_test = np_utils.to_categorical(y_test, nb_classes)
-        print(len(X_train), 'train sequences')
-        print(len(X_test), 'test sequences')
-        print('X_train shape:', X_train.shape)
-        print('X_test shape:', X_test.shape)
-        return X_train, Y_train, X_test, Y_test, vocab_char_size, nb_classes
+        return X_train, X_train_char, Y_train, X_test, X_test_char, Y_test, \
+               vocab_char_size, nb_classes
 
 
 class CharIndexer(object):
@@ -141,43 +144,50 @@ class Tokenizer(BaseEstimator, TransformerMixin):
         return np.array(tokens_character_level)
 
 
-def build_model(nb_classes, chars_vocab_size, word_count, word_length,
-                batch_size):
+def build_model(nb_classes, word_vocab_size, chars_vocab_size,
+                word_count, word_length, batch_size):
     print('Build model...')
     CONSUME_LESS='gpu'
-    input = Input(batch_shape=(batch_size,word_count, word_length,),
-            dtype='int32', name='input')
+    char_input = Input(batch_shape=(batch_size,word_count, word_length,),
+            dtype='int32', name='char_input')
     character_embedding = TimeDistributed(Embedding(chars_vocab_size, 15,
-                                         input_length=word_count,
+                                         input_length=word_length,
                                          name='char_embedding'),
-                               name='td_char_embedding')(input)
+                                          name='td_char_embedding')(char_input)
     forward_gru = TimeDistributed(GRU(16,name='char_gru_forward',
-                                        consume_less=CONSUME_LESS,
-                                      dropout_W=0.2, dropout_U=0.2),
+                                        consume_less=CONSUME_LESS),
                                    name='td_char_gru_forward')(character_embedding)
     backward_gru = TimeDistributed(GRU(16,name='char_gru_backward',
                                         consume_less=CONSUME_LESS,
-                                        go_backwards=True, dropout_W=0.2,
-                                       dropout_U=0.2),
+                                        go_backwards=True),
                                    name='td_char_gru_backward')(character_embedding)
     char_embedding = merge([forward_gru,backward_gru],mode='concat')
-    word_embedding = Embedding(chars_vocab_size, 15,
+
+    word_input = Input(batch_shape=(batch_size,word_count,),
+            dtype='int32', name='word_input')
+    word_embedding = Embedding(word_vocab_size, 32,
                                          input_length=word_count,
-                                         name='char_embedding')(input)
+                                         name='word_embedding')(word_input)
+
     embedding = merge([char_embedding,word_embedding],mode='concat')
-    word_gru = GRU(32, name='word_lstm', consume_less=CONSUME_LESS, dropout_W=0.2, dropout_U=0.2)(embedding)
+    word_gru = GRU(32, name='word_lstm', consume_less=CONSUME_LESS)(embedding)
     dense = Dense(nb_classes, activation='sigmoid', name='dense')(word_gru)
     output = Activation('softmax', name='output')(dense)
-    model = Model(input=input, output=output)
+    model = Model(input=[char_input,word_input], output=output)
     model.compile(loss='categorical_crossentropy', optimizer='adam',
                   metrics=['accuracy'])
     return model
 
 
-def train_and_test_model(X_train, y_train, X_test, y_test, batch_size, nb_epoch = 15):
-    model.fit(X_train, y_train, batch_size=batch_size, nb_epoch=nb_epoch,
-              validation_data=(X_test, y_test))
-    score, acc = model.evaluate(X_test, y_test,
+def train_and_test_model(X_train, X_train_char, Y_train, X_test,
+                         X_test_char, Y_test, batch_size, nb_epoch = 15):
+    print('Train and Test model...')
+    model.fit({'char_input': X_train_char, 'word_input': X_train},
+              {'output': Y_train},
+              batch_size=batch_size,
+              nb_epoch=nb_epoch,
+              validation_data=([X_test_char,X_test], Y_test))
+    score, acc = model.evaluate([X_test_char,X_test], Y_test,
                                 batch_size=batch_size)
     print('Test score:', score)
     print('Test accuracy:', acc)
@@ -191,13 +201,14 @@ data_access = DataAccess(max_word_length=MAX_WORD_LENGTH,
                          word_vocab_size=WORD_VOCAB_SIZE,
                          max_text_length=MAX_TEXT_LENGTH)
 
-X_train, y_train, X_test, y_test, vocab_char_size, nb_classes = \
-    data_access.load_data(sample_size=100)
+X_train, X_train_char, Y_train, X_test, X_test_char, Y_test, \
+            vocab_char_size, nb_classes = data_access.load_data()
 
-model = build_model(nb_classes=nb_classes,
+model = build_model(nb_classes=nb_classes, word_vocab_size=WORD_VOCAB_SIZE,
                     chars_vocab_size=vocab_char_size,
                     word_count=MAX_TEXT_LENGTH,
                     word_length=MAX_WORD_LENGTH,
                     batch_size=BATCH_SIZE)
 
-train_and_test_model(X_train, y_train, X_test, y_test, BATCH_SIZE)
+train_and_test_model(X_train, X_train_char, Y_train, X_test, X_test_char,
+                     Y_test, BATCH_SIZE)
