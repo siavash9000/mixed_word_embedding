@@ -180,7 +180,7 @@ def build_model(nb_classes, word_vocab_size, chars_vocab_size,
 
 
 def train_and_test_model(X_train, X_train_char, Y_train, X_test,
-                         X_test_char, Y_test, batch_size, nb_epoch = 15):
+                         X_test_char, Y_test, batch_size, nb_epoch = 200):
     print('Train and Test model...')
     model.fit({'char_input': X_train_char, 'word_input': X_train},
               {'output': Y_train},
@@ -192,9 +192,9 @@ def train_and_test_model(X_train, X_train_char, Y_train, X_test,
     print('Test score:', score)
     print('Test accuracy:', acc)
 
-WORD_VOCAB_SIZE = 10000
-MAX_TEXT_LENGTH = 500
-MAX_WORD_LENGTH = 20
+WORD_VOCAB_SIZE = 20000
+MAX_TEXT_LENGTH = 80
+MAX_WORD_LENGTH = 12
 BATCH_SIZE = 256
 
 data_access = DataAccess(max_word_length=MAX_WORD_LENGTH,
